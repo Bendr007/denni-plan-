@@ -16,12 +16,12 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
-/* Layout: nahoře další krok, pod ním všechny čtyři sekce důležitosti najednou (2x2, na telefonu pod sebou). */
+/* Layout: nahoře další krok a stav synchronizace, pod tím čtyři sekce důležitosti najednou (2x2, na telefonu pod sebou). */
 :root{
   --bg:#f1f4f6; --surface:#ffffff; --ink:#13202a; --muted:#5b6b78; --line:#d9e0e5;
   --accent:#0e5a78; --accent-ink:#ffffff;
   --t1:#c0392b; --t2:#b7791f; --t3:#4f7a91; --t4:#7d8891;
-  --ok:#2f7d4f;
+  --ok:#2f7d4f; --warn:#b7791f; --bad:#c0392b;
   --font-display:'Archivo','Arial Narrow',system-ui,sans-serif;
   --font-body:'IBM Plex Sans',system-ui,-apple-system,'Segoe UI',sans-serif;
   color-scheme:light;
@@ -30,7 +30,7 @@
   :root{
     --bg:#0f171d; --surface:#17222a; --ink:#e7edf1; --muted:#94a5b1; --line:#2a3944;
     --accent:#6fc0e0; --accent-ink:#0b1a22;
-    --t1:#ef7a6c; --t2:#e0aa4f; --t3:#7fb2cb; --t4:#8f9aa4; --ok:#6cc08b;
+    --t1:#ef7a6c; --t2:#e0aa4f; --t3:#7fb2cb; --t4:#8f9aa4; --ok:#6cc08b; --warn:#e0aa4f; --bad:#ef7a6c;
     color-scheme:dark;
   }
 }
@@ -41,12 +41,16 @@ body{background:var(--bg);color:var(--ink);font-family:var(--font-body);font-siz
 .wrap{max-width:1120px;margin:0 auto;padding:20px 16px 56px;display:flex;flex-direction:column;gap:16px}
 header.top{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:6px 16px}
 h1{font-family:var(--font-display);font-weight:800;font-size:28px;letter-spacing:-.01em;margin:0}
-.date{color:var(--muted);font-size:15px;text-transform:capitalize}
+.date{color:var(--muted);font-size:15px}
 h2{font-family:var(--font-display);font-weight:700;font-size:18px;margin:0;text-wrap:balance}
 .card{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:16px}
 .now{border:2px solid var(--accent);display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px}
 .now .lbl{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);width:100%;margin:0}
 .now .txt{flex:1;min-width:200px;font-family:var(--font-display);font-weight:700;font-size:20px;line-height:1.25;text-wrap:balance}
+.sync{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;font-size:14px;color:var(--muted)}
+.sync .dot{width:10px;height:10px;border-radius:50%;background:var(--c,var(--muted));flex-shrink:0}
+.sync form{display:flex;flex:1;min-width:240px;gap:8px}
+.sync input{min-width:0}
 .boards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;align-items:start}
 @media (max-width:820px){.boards{grid-template-columns:1fr}}
 .sec{border-top:6px solid var(--c)}
@@ -91,6 +95,8 @@ form.radd{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:8px}
 
   <section class="card now" id="now" aria-label="Další krok"></section>
 
+  <div class="sync" id="sync" role="status"></div>
+
   <section class="card" aria-labelledby="addh">
     <h2 id="addh" style="margin-bottom:10px">Přidat úkol</h2>
     <form class="add" id="add" autocomplete="off">
@@ -98,7 +104,6 @@ form.radd{display:grid;grid-template-columns:1fr auto;gap:8px;margin-top:8px}
       <select id="area" aria-label="Oblast"></select>
       <button class="btn primary" type="submit">Přidat</button>
     </form>
-    <p class="note">Úkoly se ukládají jen v tomto zařízení a prohlížeči.</p>
   </section>
 
   <div class="boards" id="boards"></div>
@@ -136,6 +141,16 @@ const TIERS={
 };
 const TCOL={1:'var(--t1)',2:'var(--t2)',3:'var(--t3)',4:'var(--t4)'};
 const KEY='denni-plan-v1';
+const CODE_KEY='denni-plan-code';
+const FB_CFG={
+  apiKey:"AIzaSyDtwItTJS2GtjDUxiJlWxGK9asUVQoCVCg",
+  authDomain:"denni-plan.firebaseapp.com",
+  projectId:"denni-plan",
+  storageBucket:"denni-plan.firebasestorage.app",
+  messagingSenderId:"129049203889",
+  appId:"1:129049203889:web:9dcd83b76605a046e87e90"
+};
+const FB_VER='10.12.2';
 
 function todayStr(){const d=new Date();return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 function uid(){return 'i'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
@@ -143,27 +158,121 @@ function areaOf(id){return AREAS.find(a=>a.id===id)||AREAS[AREAS.length-1];}
 function aIdx(id){const i=AREAS.findIndex(a=>a.id===id);return i<0?AREAS.length:i;}
 function esc(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 
-function load(){
+/* Úprava dat: chybějící pole a nový den (hotové úkoly z minulých dní zmizí). */
+function normalize(d){
+  const out={date:(d&&d.date)||todayStr(),tasks:[],rutiny:[]};
+  if(d&&Array.isArray(d.tasks)) out.tasks=d.tasks.filter(t=>t&&t.id&&typeof t.text==='string');
+  if(d&&Array.isArray(d.rutiny)) out.rutiny=d.rutiny.filter(r=>r&&r.id&&typeof r.text==='string');
+  if(out.date!==todayStr()){out.tasks=out.tasks.filter(t=>!t.done);out.date=todayStr();}
+  return out;
+}
+function loadLocal(){
   try{
     const raw=localStorage.getItem(KEY);
-    if(raw){
-      const d=JSON.parse(raw);
-      if(d&&Array.isArray(d.tasks)){
-        d.rutiny=Array.isArray(d.rutiny)?d.rutiny:[];
-        if(d.date!==todayStr()){d.tasks=d.tasks.filter(t=>!t.done);d.date=todayStr();}
-        return d;
-      }
-    }
+    if(raw) return normalize(JSON.parse(raw));
   }catch(e){ noStore(); }
-  return {date:todayStr(),tasks:[],rutiny:[]};
+  return normalize(null);
 }
 function noStore(){document.getElementById('storenote').textContent='Prohlížeč nedovoluje ukládání. Úkoly zůstanou jen do zavření stránky.';}
-function save(){
-  try{ localStorage.setItem(KEY,JSON.stringify(state)); }catch(e){ noStore(); }
+function saveLocal(){ try{ localStorage.setItem(KEY,JSON.stringify(state)); }catch(e){ noStore(); } }
+function mergeById(local,remote){
+  const seen=new Set(), out=[];
+  remote.forEach(x=>{seen.add(x.id);out.push(x);});
+  local.forEach(x=>{if(!seen.has(x.id))out.push(x);});
+  return out;
 }
 
-let state=load();
+let state=loadLocal();
 
+/* ---------- Synchronizace přes Firebase (Firestore) ---------- */
+const sync={status:'off',ref:null,unsub:null,db:null,fs:null,timer:null,first:true};
+
+function getCode(){ try{return localStorage.getItem(CODE_KEY)||'';}catch(e){return '';} }
+
+function setStatus(s){ sync.status=s; renderSync(); }
+
+function renderSync(){
+  const el=document.getElementById('sync');
+  const code=getCode();
+  if(!code){
+    el.innerHTML='<span class="dot"></span><span>Jen v tomto zařízení.</span>'+
+      '<form id="codeform" autocomplete="off"><input type="text" id="codein" aria-label="Synchronizační kód" placeholder="Synchronizační kód" autocapitalize="off" autocorrect="off" spellcheck="false">'+
+      '<button class="btn small primary" type="submit">Připojit</button></form>';
+    return;
+  }
+  const map={
+    connecting:['var(--warn)','Připojuji…'],
+    ok:['var(--ok)','Synchronizováno'],
+    offline:['var(--warn)','Bez připojení. Změny se odešlou, až bude internet.'],
+    denied:['var(--bad)','Kód nesedí s pravidly databáze. Zkontroluj kód a pravidla ve Firebase.'],
+    error:['var(--bad)','Synchronizace se nepodařila. Zkus stránku obnovit.']
+  };
+  const m=map[sync.status]||map.connecting;
+  el.innerHTML='<span class="dot" style="--c:'+m[0]+'"></span><span>'+esc(m[1])+'</span>'+
+    '<button class="btn small ghost" type="button" data-act="disconnect">Odpojit</button>';
+}
+
+async function connect(code){
+  disconnectQuiet();
+  sync.first=true;
+  setStatus('connecting');
+  try{
+    const base='https://www.gstatic.com/firebasejs/'+FB_VER+'/';
+    const [appm,fsm]=await Promise.all([import(base+'firebase-app.js'),import(base+'firebase-firestore.js')]);
+    if(!sync.db){
+      const app=appm.initializeApp(FB_CFG);
+      try{
+        sync.db=fsm.initializeFirestore(app,{localCache:fsm.persistentLocalCache({tabManager:fsm.persistentMultipleTabManager()})});
+      }catch(e){ sync.db=fsm.getFirestore(app); }
+      sync.fs=fsm;
+    }
+    sync.ref=sync.fs.doc(sync.db,'plans',code);
+    sync.unsub=sync.fs.onSnapshot(sync.ref,{includeMetadataChanges:false},snap=>{
+      if(!snap.exists()){
+        if(snap.metadata.fromCache){ setStatus('offline'); return; }
+        sync.first=false;
+        pushNow();
+        setStatus('ok');
+        return;
+      }
+      let remote;
+      try{ remote=normalize(JSON.parse(snap.data().state)); }catch(e){ setStatus('error'); return; }
+      if(sync.first){
+        sync.first=false;
+        const merged={date:todayStr(),tasks:mergeById(state.tasks,remote.tasks),rutiny:mergeById(state.rutiny,remote.rutiny)};
+        const changedVsRemote=JSON.stringify(merged)!==JSON.stringify(remote);
+        state=merged;
+        saveLocal();render();
+        if(changedVsRemote) pushNow();
+      } else if(!snap.metadata.hasPendingWrites){
+        if(JSON.stringify(remote)!==JSON.stringify(state)){state=remote;saveLocal();render();}
+      }
+      setStatus(snap.metadata.fromCache?'offline':'ok');
+    },err=>{
+      setStatus(err&&err.code==='permission-denied'?'denied':'offline');
+    });
+  }catch(e){
+    setStatus('offline');
+  }
+}
+function disconnectQuiet(){
+  if(sync.unsub){try{sync.unsub();}catch(e){} sync.unsub=null;}
+  sync.ref=null;
+}
+function pushNow(){
+  if(!sync.ref||!sync.fs) return;
+  try{
+    const p=sync.fs.setDoc(sync.ref,{state:JSON.stringify(state),updatedAt:Date.now()});
+    if(p&&p.catch) p.catch(e=>{ setStatus(e&&e.code==='permission-denied'?'denied':'offline'); });
+  }catch(e){ setStatus('offline'); }
+}
+function pushSoon(){
+  if(!sync.ref) return;
+  clearTimeout(sync.timer);
+  sync.timer=setTimeout(pushNow,250);
+}
+
+/* ---------- Vykreslení ---------- */
 function openTasks(){return state.tasks.filter(t=>!t.done);}
 function sorted(list){return list.slice().sort((a,b)=>aIdx(a.area)-aIdx(b.area));}
 function nextTask(){
@@ -173,12 +282,10 @@ function nextTask(){
   }
   return null;
 }
-
 function checkBtn(act,id,on,label){
   return '<button class="check" type="button" role="checkbox" aria-checked="'+(on?'true':'false')+'" aria-label="'+esc(label)+'" data-act="'+act+'" data-id="'+id+'">'+
     (on?'<svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8.5l3.2 3.2L13 4.8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>':'')+'</button>';
 }
-
 function renderNow(){
   const t=nextTask(), el=document.getElementById('now');
   if(!t){
@@ -188,7 +295,6 @@ function renderNow(){
   el.innerHTML='<p class="lbl">Další krok</p><div class="txt">'+esc(t.text)+'</div>'+
     '<button class="btn primary" type="button" data-act="toggle" data-id="'+t.id+'">Hotovo</button>';
 }
-
 function renderBoards(){
   let h='';
   [1,2,3,4].forEach(tier=>{
@@ -214,7 +320,6 @@ function renderBoards(){
   });
   document.getElementById('boards').innerHTML=h;
 }
-
 function renderRut(){
   const td=todayStr();
   document.getElementById('rut').innerHTML=state.rutiny.length?state.rutiny.map(r=>{
@@ -224,13 +329,13 @@ function renderRut(){
       '<button class="btn small ghost" type="button" data-act="rdel" data-id="'+r.id+'" aria-label="Smazat rutinu">Smazat</button></div>';
   }).join(''):'<p class="note">Žádné rutiny. Přidej něco, co děláš každý den.</p>';
 }
-
 function render(){
   document.getElementById('date').textContent=new Date().toLocaleDateString('cs-CZ',{weekday:'long',day:'numeric',month:'long'});
   renderNow();renderBoards();renderRut();
 }
-function commit(){render();save();}
+function commit(){render();saveLocal();pushSoon();}
 
+/* ---------- Události ---------- */
 document.addEventListener('click',e=>{
   const b=e.target.closest('[data-act]'); if(!b) return;
   const act=b.dataset.act, id=b.dataset.id;
@@ -240,13 +345,26 @@ document.addEventListener('click',e=>{
   else if(act==='rtoggle'){const r=state.rutiny.find(x=>x.id===id);if(r){r.doneDate=(r.doneDate===todayStr())?'':todayStr();commit();}}
   else if(act==='rdel'){state.rutiny=state.rutiny.filter(x=>x.id!==id);commit();}
   else if(act==='cleardone'){state.tasks=state.tasks.filter(x=>!x.done);commit();}
+  else if(act==='disconnect'){
+    disconnectQuiet();
+    try{localStorage.removeItem(CODE_KEY);}catch(err){}
+    sync.status='off';renderSync();
+  }
 });
 document.addEventListener('change',e=>{
   const s=e.target.closest('[data-change="area"]'); if(!s) return;
   const t=state.tasks.find(x=>x.id===s.dataset.id);
   if(t){t.area=s.value;commit();}
 });
-
+document.addEventListener('submit',e=>{
+  if(e.target.id==='codeform'){
+    e.preventDefault();
+    const v=document.getElementById('codein').value.trim();
+    if(v.length<8){document.getElementById('codein').focus();return;}
+    try{localStorage.setItem(CODE_KEY,v);}catch(err){ noStore(); return; }
+    connect(v);
+  }
+});
 document.getElementById('add').addEventListener('submit',e=>{
   e.preventDefault();
   const inp=document.getElementById('text'), v=inp.value.trim();
@@ -261,18 +379,20 @@ document.getElementById('radd').addEventListener('submit',e=>{
   state.rutiny.push({id:uid(),text:v,doneDate:''});
   inp.value='';commit();
 });
-
-/* Více otevřených oken: změna v jednom se projeví v druhém. */
 window.addEventListener('storage',e=>{
-  if(e.key===KEY){state=load();render();}
+  if(e.key===KEY){state=loadLocal();render();}
 });
-/* Po návratu do appky přes noc se seznam přepočítá na nový den. */
 document.addEventListener('visibilitychange',()=>{
-  if(!document.hidden){state=load();render();}
+  if(!document.hidden){
+    if(state.date!==todayStr()){state=normalize(state);saveLocal();pushSoon();}
+    render();
+  }
 });
 
 document.getElementById('area').innerHTML=AREAS.map(a=>'<option value="'+a.id+'">'+esc(a.name)+'</option>').join('');
 render();
+renderSync();
+{const c=getCode(); if(c) connect(c);}
 if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').catch(()=>{}); }
 </script>
 </body>
